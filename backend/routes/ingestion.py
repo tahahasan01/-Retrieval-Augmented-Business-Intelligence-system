@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from ingestion.ingest_structured import ingest_csv
 from ingestion.ingest_unstructured import ingest_pdf, ingest_docx, ingest_txt
 import os
 from fastapi.responses import JSONResponse
+from ingestion.embed_documents import embed_and_store
 
 router = APIRouter()
 
@@ -42,7 +43,7 @@ def upload_txt(file: UploadFile = File(...)):
     return {"chars": len(text)}
 
 @router.post("/ingest_unstructured")
-def ingest_unstructured(file: UploadFile = File(...)):
+def ingest_unstructured(file: UploadFile = File(...), collection_name: str = Form("default")):
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(file.file.read())
@@ -59,7 +60,11 @@ def ingest_unstructured(file: UploadFile = File(...)):
                 text = f.read()
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
-        return {"filename": file.filename, "chars": len(text)}
+        # Chunk text before embedding
+        chunk_size = 1000
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        embed_and_store(chunks, collection_name=collection_name)
+        return {"filename": file.filename, "chars": len(text), "chunks": len(chunks), "collection": collection_name}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

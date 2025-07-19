@@ -62,6 +62,7 @@ if page == "Query":
         optimize = st.checkbox("Optimize Query", value=True, help="Enable query optimization for better results.")
         insights = st.checkbox("Generate Insights", value=True, help="Summarize and extract key points.")
         collection = st.selectbox("Select Collection", ["default", "structured", "unstructured"], help="Choose which data collection to query.")
+        summary_length = st.selectbox("Summary Length", ["brief", "detailed"], index=0)
         submit = st.button("Submit", use_container_width=True)
     with col2:
         st.markdown("#### Query History")
@@ -77,6 +78,7 @@ if page == "Query":
                     "collection": collection,
                     "optimize_query": optimize,
                     "generate_insights": insights,
+                    "summary_length": summary_length
                 },
             )
             if response.ok:
@@ -117,36 +119,52 @@ elif page == "Analytics":
         except Exception as e:
             st.error(f"Failed to fetch analytics: {e}")
 
-# --- Ingest Data Page ---
-elif page == "Ingest Data":
-    st.title("Ingest Unstructured Data 📄")
-    uploaded_files = st.file_uploader("Upload files (PDF, DOCX, TXT, HTML)", accept_multiple_files=True)
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            st.write(f"File uploaded: {uploaded_file.name}")
-            if st.button(f"Ingest {uploaded_file.name}", key=uploaded_file.name):
-                with st.spinner(f"Uploading and ingesting {uploaded_file.name}..."):
-                    files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
-                    try:
-                        response = requests.post(f"{API_URL}/ingestion/ingest_unstructured", files=files)
-                        if response.ok:
-                            st.success(f"{uploaded_file.name} ingested successfully!")
-                        else:
-                            st.error("Error: " + response.text)
-                    except Exception as e:
-                        st.error(f"Failed to upload {uploaded_file.name}: {e}")
-        st.info("You can upload and ingest multiple files.")
-    # Show previously ingested files (if backend supports it)
-    st.subheader("Previously Ingested Files")
-    try:
-        response = requests.get(f"{API_URL}/ingestion/ingested_files")
-        if response.ok:
-            files = response.json().get("files", [])
-            if files:
-                st.table(pd.DataFrame(files, columns=["File Name", "Ingested At"]))
+def ingest_batch(endpoint, label):
+    if st.button(label):
+        try:
+            resp = requests.post(f"http://localhost:8000/{endpoint}")
+            if resp.status_code == 200:
+                st.success(f"Batch ingestion successful: {resp.json()}")
             else:
-                st.info("No files ingested yet.")
+                st.error(f"Batch ingestion failed: {resp.text}")
+        except Exception as e:
+            st.error(f"Failed to connect to backend: {e}")
+
+# Ingest Data Page
+if st.sidebar.radio("Navigation", ["Query", "Analytics", "Ingest Data"]) == "Ingest Data":
+    st.header("Ingest Data")
+    st.subheader("Batch Ingestion")
+    ingest_batch("ingest_all_structured", "Ingest All Structured Files (CSV)")
+    ingest_batch("ingest_all_unstructured", "Ingest All Unstructured Files (PDF, DOCX, TXT, HTML)")
+    st.markdown("---")
+    st.subheader("Upload Structured Data (CSV)")
+    uploaded_csv = st.file_uploader("Upload CSV File", type=["csv"])
+    collection_name = st.text_input("Collection Name (optional)")
+    if st.button("Upload CSV") and uploaded_csv is not None:
+        files = {"file": (uploaded_csv.name, uploaded_csv.getvalue())}
+        data = {"collection_name": collection_name or uploaded_csv.name.replace('.csv','')}
+        try:
+            resp = requests.post("http://localhost:8000/ingest/structured/csv", files=files, data=data)
+            if resp.status_code == 200:
+                st.success(f"CSV Ingested: {resp.json()}")
+            else:
+                st.error(f"CSV Ingestion failed: {resp.text}")
+        except Exception as e:
+            st.error(f"Failed to connect to backend: {e}")
+
+# Add debug section to list documents in the selected collection
+st.markdown("---")
+st.subheader("Debug: List Documents in Collection")
+if st.button("List Documents in Collection"):
+    collection = st.session_state.get("selected_collection", "default")
+    try:
+        resp = requests.get(f"http://localhost:8000/debug/list_documents?collection={collection}")
+        if resp.status_code == 200:
+            docs = resp.json().get("documents", [])
+            with st.expander(f"Documents in '{collection}' collection ({len(docs)})"):
+                for i, doc in enumerate(docs):
+                    st.write(f"{i+1}. {doc[:200]}{'...' if len(doc) > 200 else ''}")
         else:
-            st.warning("Could not fetch ingested files list.")
-    except Exception:
-        st.warning("File listing not available.") 
+            st.error(f"Error: {resp.text}")
+    except Exception as e:
+        st.error(f"Failed to connect to backend: {e}") 
